@@ -1,0 +1,18 @@
+{
+  "name": "압력 센서 보정",
+  "short_name": "압력보정",
+  "description": "실제 압력과 센서 표시값으로 압력 센서 최저·최대 설정값을 계산합니다.",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef1f3",
+  "theme_color": "#0f6e78",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

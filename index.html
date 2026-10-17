@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>압력 센서 보정</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="theme-color" content="#0f6e78" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1b2226" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="압력보정">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+/* 앱 화면: 위 앱바 · 가운데 스크롤 본문(계산 / 기록) · 아래 탭바 */
+:root {
+  --bg: #eef1f3;
+  --panel: #ffffff;
+  --fg: #1b2328;
+  --muted: #5d6b74;
+  --line: #d3dade;
+  --accent: #0f6e78;
+  --on-accent: #ffffff;
+  --accent-soft: #dcefef;
+  --warn: #9a5b00;
+  --warn-soft: #fbf0dc;
+  --bad: #b3261e;
+  --bar: #0f6e78;
+  --on-bar: #ffffff;
+  /* 외부 글꼴 없이 기기 글꼴만 써서 오프라인에서도 그대로 보이게 한다 */
+  --sans: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --mono: ui-monospace, "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12171a; --panel: #1b2226; --fg: #e4eaed; --muted: #95a3ab; --line: #2f3a40;
+    --accent: #5cc2c9; --on-accent: #0b1f22; --accent-soft: #163236; --warn: #f0b75c; --warn-soft: #33270f; --bad: #ff8a80;
+    --bar: #1b2226; --on-bar: #e4eaed;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12171a; --panel: #1b2226; --fg: #e4eaed; --muted: #95a3ab; --line: #2f3a40;
+  --accent: #5cc2c9; --on-accent: #0b1f22; --accent-soft: #163236; --warn: #f0b75c; --warn-soft: #33270f; --bad: #ff8a80;
+  --bar: #1b2226; --on-bar: #e4eaed;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 16px; line-height: 1.5;
+  -webkit-tap-highlight-color: transparent;
+}
+[hidden] { display: none !important; }
+
+.appbar {
+  position: sticky; top: 0; z-index: 5; background: var(--bar); color: var(--on-bar);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.appbar-in { max-width: 480px; margin: 0 auto; height: 56px; display: flex; align-items: center; gap: 10px; }
+.appbar svg { width: 26px; height: 26px; flex: none; }
+.appbar h1 { font-size: 1.1rem; margin: 0; font-weight: 700; }
+
+main {
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px calc(88px + env(safe-area-inset-bottom, 0px));
+}
+.view { max-width: 480px; margin: 0 auto; display: grid; gap: 14px; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
+.label { font-size: .75rem; letter-spacing: .06em; color: var(--muted); font-weight: 500; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field label { font-size: .85rem; color: var(--muted); }
+.inp { position: relative; }
+.inp input {
+  width: 100%; font: 600 1.3rem var(--mono); color: var(--fg); font-variant-numeric: tabular-nums;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 44px 10px 12px;
+}
+.inp input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.inp input:disabled { opacity: .45; }
+.inp span { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: .85rem; pointer-events: none; }
+.head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.toggle { font-size: .85rem; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.hint { margin: 0; font-size: .8rem; color: var(--muted); }
+
+.result { background: var(--accent-soft); border-color: transparent; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.big { font: 600 2.1rem/1.1 var(--mono); color: var(--accent); font-variant-numeric: tabular-nums; }
+.big small { font-size: .9rem; color: var(--muted); font-family: var(--sans); font-weight: 500; margin-left: 4px; }
+.formula { font: 500 .8rem/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.status { font-size: .9rem; }
+.status.err { color: var(--bad); }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 8px 4px; border-bottom: 1px solid var(--line); }
+th { font-size: .75rem; color: var(--muted); font-weight: 500; }
+td { font-family: var(--mono); }
+th:first-child, td:first-child { text-align: left; }
+td small { font-family: var(--sans); font-size: .75rem; color: var(--muted); font-weight: 400; }
+tr.best td { color: var(--accent); font-weight: 600; }
+.btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+button {
+  font: 500 .95rem var(--sans); border-radius: 10px; padding: 12px 10px; cursor: pointer; min-height: 48px;
+  background: var(--accent); color: var(--on-accent); border: 0;
+}
+button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+button:disabled { opacity: .4; cursor: default; }
+.toast { font-size: .85rem; color: var(--accent); min-height: 1.3em; margin: 0; }
+
+.notes { background: var(--warn-soft); border-color: transparent; }
+.notes ul { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; font-size: .9rem; }
+.notes .label { color: var(--warn); }
+
+.rec { display: grid; gap: 6px; }
+.rec-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.rec-time { font-size: .8rem; color: var(--muted); }
+.rec-main { font: 600 1.05rem var(--mono); font-variant-numeric: tabular-nums; }
+.rec-sub { font: 500 .8rem var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.rec-memo { font-size: .85rem; }
+.del { background: transparent; color: var(--bad); border: 0; min-height: 32px; padding: 4px 6px; font-size: .8rem; }
+.empty { text-align: center; color: var(--muted); padding: 32px 16px; }
+textarea {
+  width: 100%; min-height: 3em; font: .95rem var(--sans); color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; resize: vertical;
+}
+textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--panel); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.tabbar-in { max-width: 480px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; }
+.tab {
+  background: transparent; color: var(--muted); border-radius: 0; min-height: 60px; display: grid; justify-items: center; gap: 2px;
+  font-size: .75rem; padding: 8px 0;
+}
+.tab svg { width: 24px; height: 24px; }
+.tab[aria-selected="true"] { color: var(--accent); font-weight: 700; }
+.badge { font: 600 .7rem var(--mono); margin-left: 2px; }
+@media (prefers-reduced-motion: no-preference) { .view { animation: fade .15s ease-out; } }
+@keyframes fade { from { opacity: .4; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<header class="appbar">
+  <div class="appbar-in">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="17" r="12" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M16 17 L23 10" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><circle cx="16" cy="17" r="2.4" fill="currentColor"/></svg>
+    <h1 id="title">센서 보정</h1>
+  </div>
+</header>
+
+<main>
+  <!-- 계산 -->
+  <section class="view" id="calcView">
+    <section class="panel" aria-label="지금 센서 설정">
+      <div class="label">지금 센서 설정</div>
+      <div class="row">
+        <div class="field"><label for="lo">설정 최저</label><div class="inp"><input id="lo" type="number" inputmode="decimal" step="any" value="0"><span>bar</span></div></div>
+        <div class="field"><label for="hi">설정 최대</label><div class="inp"><input id="hi" type="number" inputmode="decimal" step="any" value="150"><span>bar</span></div></div>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="0점 측정">
+      <div class="head">
+        <div class="label">① 0점 (낮은 압력)</div>
+        <label class="toggle"><input id="useZero" type="checkbox" checked> 0점도 보정</label>
+      </div>
+      <div class="row">
+        <div class="field"><label for="p1">실제 압력</label><div class="inp"><input id="p1" type="number" inputmode="decimal" step="any" value="0"><span>bar</span></div></div>
+        <div class="field"><label for="d1">센서 표시값</label><div class="inp"><input id="d1" type="number" inputmode="decimal" step="any" value="0.5"><span>bar</span></div></div>
+      </div>
+      <p class="hint">실린더 밸브를 잠그고 배관 압력을 뺀 상태(0 bar)의 표시값. 끄면 0점은 맞다고 보고 최대값만 계산합니다.</p>
+    </section>
+
+    <section class="panel" aria-label="스팬 측정">
+      <div class="label">② 스팬 (높은 압력)</div>
+      <div class="row">
+        <div class="field"><label for="actual">실제 압력 (게이지)</label><div class="inp"><input id="actual" type="number" inputmode="decimal" step="any" value="120"><span>bar</span></div></div>
+        <div class="field"><label for="shown">센서 표시값</label><div class="inp"><input id="shown" type="number" inputmode="decimal" step="any" value="88"><span>bar</span></div></div>
+      </div>
+    </section>
+
+    <section class="panel result" aria-live="polite">
+      <div class="pair">
+        <div><div class="label">새 최저 설정값</div><div class="big" id="newMin">–</div></div>
+        <div><div class="label">새 최대 설정값</div><div class="big" id="newMax">–</div></div>
+      </div>
+      <div class="formula" id="formula"></div>
+      <div class="status" id="statusMsg"></div>
+      <table id="intTable" hidden>
+        <thead><tr><th>입력할 값 (최저 / 최대)</th><th id="th1">0 bar 때</th><th id="th2">120 bar 때</th></tr></thead>
+        <tbody id="intBody"></tbody>
+      </table>
+      <div class="field"><label for="memo">메모 (센서 번호, 가스 종류 등)</label><textarea id="memo" placeholder="예: GC-2 N₂ 라인 PT-01"></textarea></div>
+      <div class="btns">
+        <button id="save" type="button" class="ghost">기록 저장</button>
+        <button id="apply" type="button">설정했음 → 반영</button>
+      </div>
+      <p class="toast" id="toast" role="status"></p>
+    </section>
+
+    <section class="panel notes">
+      <div class="label">확인할 것</div>
+      <ul>
+        <li>설정을 바꾼 뒤 다시 잴 때는 <b>지금 설정 칸에 바꾼 값</b>이 들어가 있어야 합니다. "설정했음 → 반영"을 누르면 자동으로 들어갑니다.</li>
+        <li>새 최저 설정값이 음수(예: −0.7)로 나올 수 있습니다. 장비가 음수 설정을 받지 않으면 0점(제로) 오프셋 기능이 있는지 확인하세요.</li>
+        <li>0점은 반드시 실제로 0 bar 가 된 상태에서 잽니다. 고압 배관이므로 배기 경로와 가스 종류(독성·가연성)에 맞는 퍼지 절차를 지키세요.</li>
+        <li>압력을 바꿔 두세 번 계산해 값이 비슷하면 설정이 원인입니다. 크게 다르면 게이지 오차나 센서 이상을 의심하세요.</li>
+        <li>게이지 눈금 끝(최대의 75% 이상)에서 읽은 값은 오차가 큽니다.</li>
+        <li>설정 숫자는 999 까지 되지만 센서가 실제로 재는 범위(명판 정격)는 바뀌지 않습니다.</li>
+      </ul>
+    </section>
+  </section>
+
+  <!-- 기록 -->
+  <section class="view" id="logView" hidden>
+    <div id="logList"></div>
+    <div class="btns" id="logBtns">
+      <button id="copyCsv" type="button" class="ghost">CSV 복사</button>
+      <button id="saveCsv" type="button">CSV 파일 저장</button>
+    </div>
+    <p class="toast" id="logToast" role="status"></p>
+    <p class="hint">기록은 이 폰에만 저장됩니다. 앱을 지우거나 브라우저 데이터를 지우면 사라지니, 품질 기록으로 남길 것은 CSV 로 옮겨 두세요.</p>
+  </section>
+</main>
+
+<nav class="tabbar" role="tablist" aria-label="화면">
+  <div class="tabbar-in">
+    <button class="tab" role="tab" id="tabCalc" aria-selected="true" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="8" y="6" width="8" height="3" fill="currentColor"/><circle cx="9" cy="13" r="1.1" fill="currentColor"/><circle cx="12" cy="13" r="1.1" fill="currentColor"/><circle cx="15" cy="13" r="1.1" fill="currentColor"/><circle cx="9" cy="17" r="1.1" fill="currentColor"/><circle cx="12" cy="17" r="1.1" fill="currentColor"/><circle cx="15" cy="17" r="1.1" fill="currentColor"/></svg>
+      계산
+    </button>
+    <button class="tab" role="tab" id="tabLog" aria-selected="false" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 10h6M9 14h6M9 18h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>기록<span class="badge" id="logCount"></span></span>
+    </button>
+  </div>
+</nav>
+
+<script>
+const LIMIT = 999;
+const STATE_KEY = "gas-max-fix";
+const LOG_KEY = "gas-max-fix-log";
+const $ = id => document.getElementById(id);
+const ids = ["lo", "hi", "p1", "d1", "actual", "shown"];
+const fmt = (v, d = 1) => Number(v.toFixed(d)).toString();
+const sign = v => (v >= 0 ? "+" : "") + fmt(v);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function load(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; } catch (e) { return fallback; }
+}
+function store(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch (e) { return false; }
+}
+
+const saved = load(STATE_KEY, null);
+if (saved) {
+  ids.forEach(k => { if (saved[k] !== undefined && saved[k] !== "") $(k).value = saved[k]; });
+  if (saved.useZero !== undefined) $("useZero").checked = saved.useZero;
+  if (saved.memo) $("memo").value = saved.memo;
+}
+let log = load(LOG_KEY, []);
+let current = null;
+
+function saveState() {
+  const o = Object.fromEntries(ids.map(k => [k, $(k).value]));
+  o.useZero = $("useZero").checked;
+  o.memo = $("memo").value;
+  store(STATE_KEY, o);
+}
+
+function fail(msg) {
+  $("newMin").textContent = "–";
+  $("newMax").textContent = "–";
+  $("formula").textContent = "";
+  $("statusMsg").textContent = msg;
+  $("statusMsg").classList.add("err");
+}
+
+function calc() {
+  saveState();
+  const useZero = $("useZero").checked;
+  $("p1").disabled = $("d1").disabled = !useZero;
+
+  const lo = parseFloat($("lo").value), hi = parseFloat($("hi").value);
+  const p2 = parseFloat($("actual").value), d2 = parseFloat($("shown").value);
+  // 0점을 안 쓰면 "설정 최저에서 표시도 최저"(0점 정상)로 본다
+  const p1 = useZero ? parseFloat($("p1").value) : lo;
+  const d1 = useZero ? parseFloat($("d1").value) : lo;
+
+  $("statusMsg").className = "status";
+  $("intTable").hidden = true;
+  $("apply").disabled = $("save").disabled = true;
+  current = null;
+
+  if ([lo, hi, p1, d1, p2, d2].some(Number.isNaN)) return fail("빈 칸을 모두 숫자로 채우세요.");
+  if (hi <= lo) return fail("설정 최대는 설정 최저보다 커야 합니다.");
+  if (p2 <= p1) return fail("② 스팬 실제 압력이 ① 0점 실제 압력보다 커야 합니다.");
+  if (d2 <= d1) return fail("② 스팬 표시값이 ① 0점 표시값보다 커야 합니다. 센서 연결을 확인하세요.");
+
+  // 표시 = lo + (실제 − 센서최저) × k,  k = (hi − lo) / (센서최대 − 센서최저)
+  // 두 점으로 k 와 센서최저를 구하고, 센서최저·센서최대를 새 설정값으로 쓴다.
+  const k = (d2 - d1) / (p2 - p1);
+  const newLo = p1 - (d1 - lo) / k;
+  const newHi = newLo + (hi - lo) / k;
+
+  $("newMin").innerHTML = `${fmt(newLo)}<small>bar</small>`;
+  $("newMax").innerHTML = `${fmt(newHi)}<small>bar</small>`;
+  $("formula").innerHTML = useZero
+    ? `기울기 k = (${fmt(d2, 3)} − ${fmt(d1, 3)}) ÷ (${fmt(p2, 3)} − ${fmt(p1, 3)}) = ${fmt(k, 5)}<br>`
+      + `새 최저 = ${fmt(p1, 3)} − (${fmt(d1, 3)} − ${fmt(lo, 3)}) ÷ k = ${fmt(newLo, 2)}<br>`
+      + `새 최대 = 새 최저 + (${fmt(hi, 3)} − ${fmt(lo, 3)}) ÷ k = ${fmt(newHi, 2)}`
+    : `새 최대 = ${fmt(lo, 3)} + (${fmt(p2, 3)} − ${fmt(lo, 3)}) × (${fmt(hi, 3)} − ${fmt(lo, 3)}) ÷ (${fmt(d2, 3)} − ${fmt(lo, 3)}) = ${fmt(newHi, 2)}`;
+
+  if (Math.abs(newHi) > LIMIT || Math.abs(newLo) > LIMIT) {
+    $("statusMsg").textContent = `설정 상한 ${LIMIT} 을 넘습니다. 입력값이나 센서 연결을 다시 확인하세요.`;
+    $("statusMsg").classList.add("err");
+    return;
+  }
+
+  const zeroErr = d1 - p1, spanErr = d2 - p2;
+  const msgs = [];
+  if (useZero) msgs.push(`0점 ${Math.abs(zeroErr) < 0.05 ? "정상" : sign(zeroErr) + " bar 틀어짐"}`);
+  msgs.push(`스팬 ${Math.abs(spanErr) < 0.05 ? "정상" : sign(spanErr) + " bar 틀어짐"}`);
+  if (Math.abs(newHi - hi) / (hi - lo) < 0.005 && Math.abs(newLo - lo) / (hi - lo) < 0.005)
+    msgs.push("지금 설정과 0.5% 미만 차이라 바꿀 필요가 거의 없습니다");
+  if (newLo < 0) msgs.push("최저가 음수로 나왔습니다. 장비가 음수 설정을 받는지 확인하세요");
+  $("statusMsg").textContent = msgs.join(" · ");
+
+  // 새 설정 (L, H) 로 바꿨을 때 실제 압력 P 에서 나올 표시값
+  const showAt = (L, H, P) => L + (P - newLo) * (H - L) / (newHi - newLo);
+  const cands = [[+newLo.toFixed(1), +newHi.toFixed(1), "소수 1자리"]];
+  const ints = [];
+  for (const L of useZero ? [Math.floor(newLo), Math.ceil(newLo)] : [lo])
+    for (const H of [Math.floor(newHi), Math.ceil(newHi)]) ints.push([L, H]);
+  const errOf = ([L, H]) => Math.abs(showAt(L, H, p1) - p1) + Math.abs(showAt(L, H, p2) - p2);
+  const bestInt = ints.reduce((a, b) => errOf(a) <= errOf(b) ? a : b);
+  if (bestInt[0] !== cands[0][0] || bestInt[1] !== cands[0][1]) cands.push([...bestInt, "정수만 될 때"]);
+
+  $("th1").textContent = `${fmt(p1)} bar 때`;
+  $("th2").textContent = `${fmt(p2)} bar 때`;
+  $("intBody").innerHTML = cands.map(([L, H, note], i) =>
+    `<tr class="${i === 0 ? "best" : ""}"><td>${fmt(L)} / ${fmt(H)} <small>${note}</small></td>`
+    + `<td>${fmt(showAt(L, H, p1))}</td><td>${fmt(showAt(L, H, p2))}</td></tr>`).join("");
+  $("intTable").hidden = false;
+  $("apply").disabled = $("save").disabled = false;
+  current = { lo, hi, useZero, p1, d1, p2, d2, newLo: +newLo.toFixed(2), newHi: +newHi.toFixed(2) };
+}
+
+function toast(id, msg) {
+  $(id).textContent = msg;
+  clearTimeout(toast[id]);
+  toast[id] = setTimeout(() => { $(id).textContent = ""; }, 4000);
+}
+
+ids.forEach(k => $(k).addEventListener("input", calc));
+$("useZero").addEventListener("change", calc);
+$("memo").addEventListener("input", saveState);
+
+$("apply").addEventListener("click", () => {
+  if (!current) return;
+  const L = +current.newLo.toFixed(1), H = +current.newHi.toFixed(1);
+  $("lo").value = L;
+  $("hi").value = H;
+  ["d1", "actual", "shown"].forEach(k => $(k).value = "");
+  $("p1").value = 0;
+  calc();
+  toast("toast", `지금 설정을 ${L} ~ ${H} bar 로 바꿨습니다. 새로 잰 값을 넣어 확인하세요.`);
+  $($("useZero").checked ? "d1" : "actual").focus();
+});
+
+$("save").addEventListener("click", () => {
+  if (!current) return;
+  log.unshift({ t: new Date().toISOString(), memo: $("memo").value.trim(), ...current });
+  const ok = store(LOG_KEY, log);
+  renderLog();
+  toast("toast", ok ? "기록에 저장했습니다." : "이 브라우저에서는 저장할 수 없습니다. 기록이 앱을 닫으면 사라집니다.");
+});
+
+// ---- 기록 ----
+function when(iso) {
+  const d = new Date(iso), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function renderLog() {
+  $("logCount").textContent = log.length ? ` ${log.length}` : "";
+  $("logBtns").hidden = !log.length;
+  if (!log.length) {
+    $("logList").innerHTML = `<div class="panel empty">저장된 기록이 없습니다.<br>계산 화면에서 "기록 저장"을 누르면 여기에 쌓입니다.</div>`;
+    return;
+  }
+  $("logList").innerHTML = `<div class="view">` + log.map((r, i) => `
+    <article class="panel rec">
+      <div class="rec-top"><span class="rec-time">${when(r.t)}</span><button class="del" type="button" data-i="${i}">삭제</button></div>
+      <div class="rec-main">${fmt(r.lo)} ~ ${fmt(r.hi)} → ${fmt(r.newLo)} ~ ${fmt(r.newHi)} bar</div>
+      <div class="rec-sub">${r.useZero ? `0점 ${fmt(r.p1)}→${fmt(r.d1)} · ` : ""}스팬 ${fmt(r.p2)}→${fmt(r.d2)}</div>
+      ${r.memo ? `<div class="rec-memo">${esc(r.memo)}</div>` : ""}
+    </article>`).join("") + `</div>`;
+}
+
+let pendingDel = null;
+$("logList").addEventListener("click", e => {
+  const b = e.target.closest(".del");
+  if (!b) return;
+  const i = +b.dataset.i;
+  if (pendingDel !== i) {
+    pendingDel = i;
+    b.textContent = "한 번 더 누르면 삭제";
+    return;
+  }
+  pendingDel = null;
+  log.splice(i, 1);
+  store(LOG_KEY, log);
+  renderLog();
+});
+
+function csv() {
+  const head = ["일시", "메모", "기존 최저", "기존 최대", "0점 실제", "0점 표시", "스팬 실제", "스팬 표시", "새 최저", "새 최대"];
+  const q = v => `"${String(v).replace(/"/g, '""')}"`;
+  const rows = log.map(r => [when(r.t), r.memo, r.lo, r.hi, r.useZero ? r.p1 : "", r.useZero ? r.d1 : "", r.p2, r.d2, r.newLo, r.newHi]);
+  return [head, ...rows].map(row => row.map(q).join(",")).join("\r\n");
+}
+
+$("copyCsv").addEventListener("click", () => {
+  navigator.clipboard.writeText(csv())
+    .then(() => toast("logToast", "CSV 를 복사했습니다. 메모장이나 엑셀에 붙여 넣으세요."))
+    .catch(() => toast("logToast", "복사가 막혀 있습니다. CSV 파일 저장을 쓰세요."));
+});
+
+$("saveCsv").addEventListener("click", () => {
+  const blob = new Blob(["﻿" + csv()], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `센서보정기록_${when(new Date().toISOString()).slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast("logToast", "다운로드 폴더에 저장했습니다.");
+});
+
+// ---- 탭 ----
+function show(tab) {
+  const isLog = tab === "log";
+  $("calcView").hidden = isLog;
+  $("logView").hidden = !isLog;
+  $("tabCalc").setAttribute("aria-selected", String(!isLog));
+  $("tabLog").setAttribute("aria-selected", String(isLog));
+  $("title").textContent = isLog ? "보정 기록" : "센서 보정";
+  pendingDel = null;
+  if (isLog) renderLog();
+  window.scrollTo(0, 0);
+}
+$("tabCalc").addEventListener("click", () => show("calc"));
+$("tabLog").addEventListener("click", () => show("log"));
+
+renderLog();
+calc();
+
+// 웹 주소(https)로 열었을 때만 오프라인 캐시를 켠다. 파일로 열면 그냥 동작.
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>
