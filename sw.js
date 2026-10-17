@@ -1,6 +1,7 @@
 // 앱 파일을 캐시에 넣어 두고 오프라인에서는 캐시로 연다.
-// 앱 파일을 고치면 VERSION 을 올려야 폰에 새 버전이 들어간다.
-const VERSION = "gas-pressure-v1";
+// 인터넷이 되면 항상 서버의 최신 파일을 쓰므로 수정은 다음 실행 때 바로 반영된다.
+// VERSION 은 예전 캐시를 지우는 용도. FILES 목록을 바꿀 때 올린다.
+const VERSION = "gas-pressure-v2";
 const FILES = ["./", "index.html", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "icon-maskable-512.png"];
 
 self.addEventListener("install", e => {
@@ -15,11 +16,11 @@ self.addEventListener("activate", e => {
   );
 });
 
-// 네트워크 우선, 안 되면 캐시. 인터넷이 될 때는 항상 최신 파일을 받는다.
+// 네트워크 우선, 안 되면 캐시. no-cache 로 브라우저 HTTP 캐시(Pages 는 10분)도 건너뛰고 서버에 확인한다.
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: "no-cache" })
       .then(res => {
         const copy = res.clone();
         caches.open(VERSION).then(c => c.put(e.request, copy));
